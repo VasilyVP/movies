@@ -143,11 +143,49 @@ IMDB uses `\N` as its null sentinel. The helpers `_null()`, `_int()`, and `_floa
 
 ---
 
+## Progress Reporting
+
+The script displays progress bars using `tqdm`. There are two levels of progress:
+
+### Overall progress bar
+
+A single outer bar tracks the major seeding phases. It is created before any phase begins and advances by one step as each phase completes.
+
+| Step | Label shown in bar |
+|------|--------------------|
+| Wipe existing data | `Wiping existing data` |
+| Create schema | `Creating schema` |
+| Seed Person nodes | `Seeding Persons` |
+| Seed Title nodes | `Seeding Titles` |
+| Seed relationships | `Seeding relationships` |
+
+Total = 5 steps. The bar is displayed with `desc="Overall"` and `total=5`.
+
+### Per-phase progress bars
+
+Each data-writing phase shows a nested inner bar that tracks batches written for that phase. The inner bar is created at the start of the phase and closed when the phase ends.
+
+| Phase | `desc` label | `total` | Unit |
+|-------|--------------|---------|------|
+| Wipe existing data | `Wiping` | total node/rel count ÷ 10 000 (ceiling) | `batches` |
+| Seed Person nodes | `Persons` | person count ÷ `BATCH_SIZE` (ceiling) | `batches` |
+| Seed Title nodes | `Titles` | title count ÷ `BATCH_SIZE` (ceiling) | `batches` |
+| Seed relationships (per type) | relationship type name (e.g. `ACTED_IN`) | row count for that type ÷ `BATCH_SIZE` (ceiling) | `batches` |
+
+- The create-schema step has no inner bar (it executes a fixed set of Cypher statements, not batched data writes).
+- Relationship types each get their own inner bar; they are created and closed sequentially, one per type.
+- All bars use `leave=False` for the inner bars so they disappear after the phase is done, keeping the terminal clean.
+- The overall bar uses `leave=True` so the final state remains visible after the script exits.
+- Total counts are fetched from DuckDB with a `COUNT(*)` query before the phase begins so `tqdm` can display an accurate total and ETA.
+
+---
+
 ## Dependencies
 
 - `duckdb` — read-only source queries
 - `neo4j` (official driver) — graph writes
 - `python-dotenv` — `.env` loading
+- `tqdm` — progress bars
 - `argparse`, `os`, `time`, `pathlib` — stdlib
 
 ---

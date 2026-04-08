@@ -1,7 +1,14 @@
+# Start the full setup: install services and seed data.
+setup:
+	@echo "Starting installation..."
+	@$(MAKE) install
+	@echo "Seeding data..."
+	@$(MAKE) seed
+	@echo "Done."
 
 # Start all services in detached mode, create Neo4j instance.
 install:
-	@docker compose up -d
+	@docker compose up -d --wait
 
 # Run the setup script to populate the database with initial data
 seed:

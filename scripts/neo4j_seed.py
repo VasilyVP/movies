@@ -11,6 +11,7 @@ Wipes the database before seeding.
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import time
 from pathlib import Path
@@ -19,6 +20,7 @@ from typing import Any, Generator, LiteralString, cast
 import duckdb
 from dotenv import load_dotenv
 from neo4j import Driver, GraphDatabase, Query, Session
+from tqdm import tqdm  # type: ignore[import-untyped]
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -116,17 +118,29 @@ def get_driver(uri: str, user: str, password: str) -> Driver:
 
 
 def wipe_database(session: Session) -> None:
-    print("Wiping database...")
-    t = time.time()
-    session.run(
-        "MATCH (n) CALL (n) { DETACH DELETE n } IN TRANSACTIONS OF 10000 ROWS"
+    node_count: int = int(session.run("MATCH (n) RETURN count(n) AS c").single()["c"])  # type: ignore[index]
+    rel_count: int = int(session.run("MATCH ()-[r]->() RETURN count(r) AS c").single()["c"])  # type: ignore[index]
+    total_batches = (
+        math.ceil((node_count + rel_count) / 10_000)
+        if (node_count + rel_count) > 0
+        else 0
     )
-    print(f"  Done ({time.time() - t:.1f}s)")
+
+    with tqdm(
+        total=total_batches, desc="Wiping", unit="batches", leave=False
+    ) as bar:
+        while True:
+            result = session.run(
+                "MATCH (n) WITH n LIMIT 10000 DETACH DELETE n RETURN count(*) AS cnt"
+            )
+            rec = result.single()
+            deleted: int = rec["cnt"] if rec is not None else 0
+            if deleted == 0:
+                break
+            bar.update(1)
 
 
 def create_schema(session: Session) -> None:
-    print("Creating constraints and indexes...")
-
     ddl = [
         # Uniqueness constraints (imply indexes)
         "CREATE CONSTRAINT person_nconst IF NOT EXISTS FOR (p:Person) REQUIRE p.nconst IS UNIQUE",
@@ -155,119 +169,122 @@ def create_schema(session: Session) -> None:
     for stmt in ddl:
         session.run(Query(cast(LiteralString, stmt)))
 
-    print(f"  {len(ddl)} constraints/indexes created")
-
 
 # ---------------------------------------------------------------------------
 # Seeding
 # ---------------------------------------------------------------------------
 
 
-def seed_persons(session: Session, con: duckdb.DuckDBPyConnection, limit: int | None = None) -> None:
-    print("Seeding Person nodes...")
-    t = time.time()
+def seed_persons(
+    session: Session, con: duckdb.DuckDBPyConnection, limit: int | None = None
+) -> None:
     if limit is not None:
-        query = (
-            "SELECT nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles"
-            " FROM name_unique"
+        where = (
             " WHERE nconst IN ("
             "  SELECT DISTINCT nconst FROM title_principals"
             f"  WHERE tconst IN (SELECT tconst FROM title_basics ORDER BY tconst LIMIT {limit})"
             " )"
         )
     else:
-        query = (
-            "SELECT nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles"
-            " FROM name_unique"
-        )
-    rows = con.execute(query).fetchall()
+        where = ""
 
+    count: int = int(con.execute(f"SELECT COUNT(*) FROM name_unique{where}").fetchone()[0])  # type: ignore[index]
+    rows = con.execute(
+        "SELECT nconst, primaryName, birthYear, deathYear, primaryProfession, knownForTitles"
+        f" FROM name_unique{where}"
+    ).fetchall()
+
+    total_batches = math.ceil(count / BATCH_SIZE) if count > 0 else 0
     total = 0
-    for batch in _batches(rows, BATCH_SIZE):
-        data: list[dict[str, Any]] = [
-            {
-                "nconst": r[0],
-                "primaryName": _null(r[1]),
-                "birthYear": _int(r[2]),
-                "deathYear": _int(r[3]),
-                "primaryProfession": _null(r[4]),
-                "knownForTitles": _null(r[5]),
-            }
-            for r in batch
-        ]
-        result = session.run(
-            "UNWIND $batch AS row"
-            " CREATE (p:Person {"
-            "  nconst: row.nconst,"
-            "  primaryName: row.primaryName,"
-            "  birthYear: row.birthYear,"
-            "  deathYear: row.deathYear,"
-            "  primaryProfession: row.primaryProfession,"
-            "  knownForTitles: row.knownForTitles"
-            " })",
-            batch=data,
-        )
-        total += result.consume().counters.nodes_created
+    with tqdm(total=total_batches, desc="Persons", unit="batches", leave=False) as bar:
+        for batch in _batches(rows, BATCH_SIZE):
+            data: list[dict[str, Any]] = [
+                {
+                    "nconst": r[0],
+                    "primaryName": _null(r[1]),
+                    "birthYear": _int(r[2]),
+                    "deathYear": _int(r[3]),
+                    "primaryProfession": _null(r[4]),
+                    "knownForTitles": _null(r[5]),
+                }
+                for r in batch
+            ]
+            result = session.run(
+                "UNWIND $batch AS row"
+                " CREATE (p:Person {"
+                "  nconst: row.nconst,"
+                "  primaryName: row.primaryName,"
+                "  birthYear: row.birthYear,"
+                "  deathYear: row.deathYear,"
+                "  primaryProfession: row.primaryProfession,"
+                "  knownForTitles: row.knownForTitles"
+                " })",
+                batch=data,
+            )
+            total += result.consume().counters.nodes_created
+            bar.update(1)
 
-    print(f"  {total:,} Person nodes ({time.time() - t:.1f}s)")
 
-
-def seed_titles(session: Session, con: duckdb.DuckDBPyConnection, limit: int | None = None) -> None:
-    print("Seeding Title nodes...")
-    t = time.time()
+def seed_titles(
+    session: Session, con: duckdb.DuckDBPyConnection, limit: int | None = None
+) -> None:
     limit_clause = f" ORDER BY b.tconst LIMIT {limit}" if limit is not None else ""
+    count_query = (
+        f"SELECT COUNT(*) FROM (SELECT b.tconst FROM title_basics b{limit_clause})"
+    )
+    count: int = int(con.execute(count_query).fetchone()[0])  # type: ignore[index]
     rows = con.execute(
         "SELECT b.tconst, b.titleType, b.primaryTitle, b.originalTitle,"
         "       b.isAdult, b.startYear, b.endYear, b.runtimeMinutes, b.genres,"
         "       r.averageRating, r.numVotes"
         " FROM title_basics b"
-        " LEFT JOIN title_ratings r ON b.tconst = r.tconst"
-        + limit_clause
+        " LEFT JOIN title_ratings r ON b.tconst = r.tconst" + limit_clause
     ).fetchall()
 
+    total_batches = math.ceil(count / BATCH_SIZE) if count > 0 else 0
     total = 0
-    for batch in _batches(rows, BATCH_SIZE):
-        data: list[dict[str, Any]] = [
-            {
-                "tconst": r[0],
-                "titleType": _null(r[1]),
-                "primaryTitle": _null(r[2]),
-                "originalTitle": _null(r[3]),
-                "isAdult": bool(int(r[4])) if _null(r[4]) is not None else None,
-                "startYear": _int(r[5]),
-                "endYear": _int(r[6]),
-                "runtimeMinutes": _int(r[7]),
-                "genres": _null(r[8]),
-                "averageRating": _float(r[9]),
-                "numVotes": _int(r[10]),
-            }
-            for r in batch
-        ]
-        result = session.run(
-            "UNWIND $batch AS row"
-            " CREATE (t:Title {"
-            "  tconst: row.tconst,"
-            "  titleType: row.titleType,"
-            "  primaryTitle: row.primaryTitle,"
-            "  originalTitle: row.originalTitle,"
-            "  isAdult: row.isAdult,"
-            "  startYear: row.startYear,"
-            "  endYear: row.endYear,"
-            "  runtimeMinutes: row.runtimeMinutes,"
-            "  genres: row.genres,"
-            "  averageRating: row.averageRating,"
-            "  numVotes: row.numVotes"
-            " })",
-            batch=data,
-        )
-        total += result.consume().counters.nodes_created
+    with tqdm(total=total_batches, desc="Titles", unit="batches", leave=False) as bar:
+        for batch in _batches(rows, BATCH_SIZE):
+            data: list[dict[str, Any]] = [
+                {
+                    "tconst": r[0],
+                    "titleType": _null(r[1]),
+                    "primaryTitle": _null(r[2]),
+                    "originalTitle": _null(r[3]),
+                    "isAdult": bool(int(r[4])) if _null(r[4]) is not None else None,
+                    "startYear": _int(r[5]),
+                    "endYear": _int(r[6]),
+                    "runtimeMinutes": _int(r[7]),
+                    "genres": _null(r[8]),
+                    "averageRating": _float(r[9]),
+                    "numVotes": _int(r[10]),
+                }
+                for r in batch
+            ]
+            result = session.run(
+                "UNWIND $batch AS row"
+                " CREATE (t:Title {"
+                "  tconst: row.tconst,"
+                "  titleType: row.titleType,"
+                "  primaryTitle: row.primaryTitle,"
+                "  originalTitle: row.originalTitle,"
+                "  isAdult: row.isAdult,"
+                "  startYear: row.startYear,"
+                "  endYear: row.endYear,"
+                "  runtimeMinutes: row.runtimeMinutes,"
+                "  genres: row.genres,"
+                "  averageRating: row.averageRating,"
+                "  numVotes: row.numVotes"
+                " })",
+                batch=data,
+            )
+            total += result.consume().counters.nodes_created
+            bar.update(1)
 
-    print(f"  {total:,} Title nodes ({time.time() - t:.1f}s)")
 
-
-def seed_relationships(session: Session, con: duckdb.DuckDBPyConnection, limit: int | None = None) -> None:
-    print("Seeding relationships...")
-    t = time.time()
+def seed_relationships(
+    session: Session, con: duckdb.DuckDBPyConnection, limit: int | None = None
+) -> None:
     if limit is not None:
         query = (
             "SELECT tconst, nconst, category, job, characters FROM title_principals"
@@ -281,7 +298,9 @@ def seed_relationships(session: Session, con: duckdb.DuckDBPyConnection, limit: 
     by_type: dict[str, list[dict[str, Any]]] = {}
     for r in rows:
         category = r[2]
-        rel_type = CATEGORY_TO_REL_TYPE.get(category) or category.upper().replace(" ", "_")
+        rel_type = CATEGORY_TO_REL_TYPE.get(category) or category.upper().replace(
+            " ", "_"
+        )
         by_type.setdefault(rel_type, []).append(
             {
                 "tconst": r[0],
@@ -295,17 +314,20 @@ def seed_relationships(session: Session, con: duckdb.DuckDBPyConnection, limit: 
     total = 0
     for rel_type, rel_rows in by_type.items():
         # rel_type is either a CATEGORY_TO_REL_TYPE substitution or a normalised category name — safe to interpolate
-        query = (
+        cypher = (
             "UNWIND $batch AS row"
             " MATCH (p:Person {nconst: row.nconst})"
             " MATCH (t:Title  {tconst: row.tconst})"
             f" CREATE (p)-[r:{rel_type} {{job: row.job, characters: row.characters, category: row.category}}]->(t)"
         )
-        for batch in _batches(rel_rows, BATCH_SIZE):
-            result = session.run(Query(cast(LiteralString, query)), batch=batch)
-            total += result.consume().counters.relationships_created
-
-    print(f"  {total:,} relationships ({time.time() - t:.1f}s)")
+        type_batches = math.ceil(len(rel_rows) / BATCH_SIZE) if rel_rows else 0
+        with tqdm(
+            total=type_batches, desc=rel_type, unit="batches", leave=False
+        ) as bar:
+            for batch in _batches(rel_rows, BATCH_SIZE):
+                result = session.run(Query(cast(LiteralString, cypher)), batch=batch)
+                total += result.consume().counters.relationships_created
+                bar.update(1)
 
 
 # ---------------------------------------------------------------------------
@@ -332,12 +354,27 @@ def main():
 
     con = duckdb.connect(str(DUCKDB_PATH), read_only=True)
 
-    with driver.session() as session:  # type: ignore[misc]
-        wipe_database(session)
-        create_schema(session)
-        seed_persons(session, con, limit=limit)
-        seed_titles(session, con, limit=limit)
-        seed_relationships(session, con, limit=limit)
+    with tqdm(total=5, desc="Overall", leave=True) as overall:
+        with driver.session() as session:  # type: ignore[misc]
+            overall.set_description("Wiping existing data")
+            wipe_database(session)
+            overall.update(1)
+
+            overall.set_description("Creating schema")
+            create_schema(session)
+            overall.update(1)
+
+            overall.set_description("Seeding Persons")
+            seed_persons(session, con, limit=limit)
+            overall.update(1)
+
+            overall.set_description("Seeding Titles")
+            seed_titles(session, con, limit=limit)
+            overall.update(1)
+
+            overall.set_description("Seeding relationships")
+            seed_relationships(session, con, limit=limit)
+            overall.update(1)
 
     con.close()
     driver.close()
