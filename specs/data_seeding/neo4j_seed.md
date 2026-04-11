@@ -13,6 +13,7 @@ uv run python scripts/neo4j_seed.py [--limit N]
 ```
 
 - `--limit N` — optional; seeds only the first N titles and their related persons/relationships (useful for development)
+- Limited seeding is deterministic: the script uses `ORDER BY tconst LIMIT N` and reuses that same title subset for Person, Title, and relationship phases
 - Requires a `.env` file at the project root with `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`
 - Neo4j container must be running before execution
 
@@ -108,6 +109,14 @@ Direction: `(Person)-[REL_TYPE]->(Title)`
 
 Relationships are grouped by type before writing; each type is written in separate batches.
 
+During write, each batch returns a created-edge count from Neo4j and the script reconciles it against attempted rows. For each relationship type, the script prints:
+
+- `expected` — rows selected from DuckDB for the relationship type
+- `created` — edges actually created in Neo4j
+- `skipped` — rows not materialized because either endpoint node did not match
+
+At the end of relationship seeding, the script prints a total reconciliation line across all relationship types.
+
 ---
 
 ## Constraints and Indexes
@@ -145,7 +154,7 @@ IMDB uses `\N` as its null sentinel. The helpers `_null()`, `_int()`, and `_floa
 
 ## Progress Reporting
 
-The script displays progress bars using `tqdm`. There are two levels of progress:
+The script displays exactly two progress bars at all times using `tqdm`: one for the overall pipeline and one for the current phase. The terminal never scrolls or drifts — at most two bars are visible simultaneously throughout the entire run.
 
 ### Overall progress bar
 
@@ -161,22 +170,25 @@ A single outer bar tracks the major seeding phases. It is created before any pha
 
 Total = 5 steps. The bar is displayed with `desc="Overall"` and `total=5`.
 
-### Per-phase progress bars
+Display format: percentage complete, elapsed time, and ETA. No item counts or batch units.
 
-Each data-writing phase shows a nested inner bar that tracks batches written for that phase. The inner bar is created at the start of the phase and closed when the phase ends.
+### Per-phase progress bar
 
-| Phase | `desc` label | `total` | Unit |
-|-------|--------------|---------|------|
-| Wipe existing data | `Wiping` | total node/rel count ÷ 10 000 (ceiling) | `batches` |
-| Seed Person nodes | `Persons` | person count ÷ `BATCH_SIZE` (ceiling) | `batches` |
-| Seed Title nodes | `Titles` | title count ÷ `BATCH_SIZE` (ceiling) | `batches` |
-| Seed relationships (per type) | relationship type name (e.g. `ACTED_IN`) | row count for that type ÷ `BATCH_SIZE` (ceiling) | `batches` |
+A single inner bar is reused across all phases. At the start of each phase the bar is reset and relabelled; it is not closed and reopened between phases so the terminal position stays fixed.
+
+| Phase | `desc` label |
+|-------|--------------|
+| Wipe existing data | `Wiping` |
+| Seed Person nodes | `Persons` |
+| Seed Title nodes | `Titles` |
+| Seed relationships (per type) | relationship type name (e.g. `ACTED_IN`) |
 
 - The create-schema step has no inner bar (it executes a fixed set of Cypher statements, not batched data writes).
-- Relationship types each get their own inner bar; they are created and closed sequentially, one per type.
-- All bars use `leave=False` for the inner bars so they disappear after the phase is done, keeping the terminal clean.
+- For the relationship phase each relationship type resets and relabels the same inner bar; only one bar is ever visible at a time.
+- The inner bar uses `leave=False` so it disappears when the final phase completes.
 - The overall bar uses `leave=True` so the final state remains visible after the script exits.
-- Total counts are fetched from DuckDB with a `COUNT(*)` query before the phase begins so `tqdm` can display an accurate total and ETA.
+- Display format: percentage complete, elapsed time, and ETA. Batch counts and item counts are not shown.
+- Total counts are fetched from DuckDB with a `COUNT(*)` query before each phase begins so `tqdm` can display an accurate percentage and ETA.
 
 ---
 
@@ -197,4 +209,15 @@ Each data-writing phase shows a nested inner bar that tracks batches written for
 | `.env` missing or incomplete       | `KeyError` on missing environment variable                   |
 | Neo4j unreachable                  | `driver.verify_connectivity()` raises before any data is written |
 | DuckDB file missing                | `duckdb.connect()` raises `IOException`                      |
-| Person/Title node missing for a relationship | Cypher `MATCH` silently skips the row (no relationship created) |
+| Person/Title node missing for a relationship | Row is counted as skipped; diagnostics report missing endpoint counts |
+| DuckDB returns relationship rows but Neo4j creates zero edges | Script raises `RuntimeError` and exits non-zero |
+| Relationship expected and created counts mismatch | Script raises `RuntimeError` with skipped/missing diagnostics |
+
+---
+
+## Memory Management
+
+- All DuckDB result sets are fetched in batches (size `BATCH_SIZE`); no full table is ever loaded into memory at once.
+- Each Neo4j transaction is committed and closed after every batch; references are released immediately so the driver's connection pool does not accumulate open transactions.
+- `tqdm` inner progress bars are explicitly closed (`bar.close()`) after each phase, even on early exit, to release their file handles.
+- The DuckDB connection and the Neo4j driver are closed in a `finally` block (or via context managers) so they are always released regardless of exceptions.

@@ -22,7 +22,7 @@ seed-sample:
 
 # Resume previously stopped containers (no config reload)
 start:
-	@docker compose start
+	@docker compose start --wait
 
 # Pause containers without removing them (data and state preserved)
 stop:
@@ -38,6 +38,15 @@ reset:
 	@rm -f back-end/data/imdb.duckdb
 	@rm -f back-end/data/*.parquet
 	@rm -f back-end/data/sources/*.csv
+
+# Start the Neo4J, fastapi development server and vite dev
+dev: export PYTHONUTF8 = 1
+dev:
+	@echo "Starting development servers..."
+	@$(MAKE) start
+	@concurrently -n "FastAPI,Vite" -c "green,yellow" \
+		"uv run --directory back-end fastapi dev app/main.py" \
+		"cd front-end && bun run dev"
 
 # Tail logs from all services
 logs:

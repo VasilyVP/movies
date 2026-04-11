@@ -2,18 +2,23 @@
 
 ## Architecture
 
-Data pipeline that ingests IMDB datasets into two query layers:
+Full-stack app: IMDB data pipeline feeding a relational store, graph store, and REST API served to a React front-end.
 
 ```
 IMDB TSV.GZ → Parquet (back-end/data/) → DuckDB (imdb.duckdb) → Neo4j graph
+                                                  ↓
+                                    FastAPI (back-end/) → React + Vite (front-end/)
 ```
 
 - **DuckDB** — relational queries over Parquet files; single-file `back-end/data/imdb.duckdb`
 - **Neo4j** — graph traversals; runs in Docker (browser: `localhost:7474`, bolt: `localhost:7687`)
-- **Front-end** — not yet implemented (`front-end/` is empty)
-- **Scripts** — all ETL logic lives in `scripts/`; no web API or server
+- **FastAPI** — REST API (`back-end/app/`); N-tier: `endpoints → services → repositories → database`; served by Granian
+- **React** — SPA (`front-end/src/`); React 19 + Vite 8 + TypeScript strict + Tailwind 4 + shadcn/ui
+- **Scripts** — ETL/pipeline logic in `scripts/`
 
 ## Data Schema
+
+See [specs/data_seeding/imdb_seed.md](../specs/data_seeding/imdb_seed.md) and [specs/data_seeding/neo4j_seed.md](../specs/data_seeding/neo4j_seed.md) for full pipeline details.
 
 ### DuckDB / Parquet Tables
 
@@ -38,24 +43,35 @@ Relationship properties: `category`, `job`, `characters` (all nullable). Unrecog
 ## Build and Test
 
 ```bash
+# Infrastructure
 make install       # Start Neo4j container (docker compose up -d)
-make seed          # Full data pipeline: download IMDB → Parquet → DuckDB → Neo4j (~30 min)
-make seed-sample   # Seed pipeline with 1,000 titles — use this for dev/testing
-make start         # Resume stopped containers
+make start         # Resume stopped containers (data preserved)
 make stop          # Pause containers (data preserved)
 make teardown      # Remove containers and networks (volumes kept)
-make reset         # Full wipe: containers, networks, volumes, all data
+make reset         # Full wipe: containers, networks, volumes, all data files
 make status        # Check running containers
 make logs          # Tail logs
+
+# Data pipeline
+make seed          # Full pipeline: download IMDB → Parquet → DuckDB → Neo4j (~30 min)
+make seed-sample   # Pipeline with 1,000 titles — use this for dev/testing
+
+# Development servers (requires concurrently)
+make dev           # Start Neo4j + FastAPI dev server + Vite dev server concurrently
 ```
 
-Run scripts directly: `uv run python scripts/<script>.py`
+Run individually:
+```bash
+uv run python scripts/imdb_seed.py
+uv run python scripts/neo4j_seed.py [--limit N]
+uv run --directory back-end fastapi dev app/main.py  # back-end only
 
-- `scripts/imdb_seed.py` — downloads IMDB datasets, converts to Parquet, rebuilds DuckDB
-- `scripts/neo4j_seed.py [--limit N]` — seeds Neo4j from DuckDB; `--limit N` for a subset
-- `scripts/csv_export.py` — exports Parquet to CSV (requires seeded Parquet files)
+# Front-end
+cd front-end && bun run dev    # Vite dev server on port 3000
+cd front-end && bun run build
+```
 
-There are no tests yet; a `tests/` directory does not exist.
+There are no tests yet; `tests/` has only `.gitkeep`.
 
 ## Environment
 
@@ -70,11 +86,26 @@ Neo4j container must be running (`make install`) before seeding the graph. The c
 
 ## Conventions
 
+### Back-End (Python)
+
 - **Python 3.14+**, managed with `uv`; never use pip or npm directly
 - **Strict Pyright** — all code must pass `pyrightconfig.json` rules; add type hints to every function
 - Helper functions are prefixed with `_`; constants use `UPPER_SNAKE_CASE` at module top
 - Use `from __future__ import annotations` for forward references
 - Progress output uses `print(..., flush=True)`; no logging module is used
+- **N-tier structure**: `endpoints/ → services/ → repositories/ → core/database.py`
+- DuckDB connection singleton in `core/database.py`; inject via `DuckDBDep` (Annotated type in `dependencies.py`)
+- Neo4j is seeded in batches of 5,000 records per transaction; maintain this pattern for bulk writes
+- Use the `_int()` / `_float()` helpers when reading IMDB data that may contain `\N` sentinel values
+
+### Front-End (TypeScript)
+
+- **Package manager**: Bun — never use npm; install packages with `bun add`, run scripts with `bun run`
+- **Stack**: React 19 · React Router 7 · TypeScript strict · Vite 8 · Tailwind CSS 4 · shadcn/ui
+- Path alias `@` → `src/`
+- Vite dev server on port 3000 proxies `/api` → `http://localhost:8000`
+- Add shadcn components: `bunx --bun shadcn@latest add <component>`
+- Icons: `@hugeicons/react`
 
 ## Common Pitfalls
 
