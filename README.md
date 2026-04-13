@@ -1,34 +1,35 @@
 # IMDB Explorer
 
-A full-stack application that provides a **graph analytic interface** and **instant data querying** over the IMDB dataset. Explore relationships between titles, people, and roles through a Neo4j-powered graph layer, or run fast relational queries via DuckDB — all served through a REST API to a React front-end.
+Full-stack app for graph analytics and instant querying over the IMDB dataset — Neo4j for graph traversals, DuckDB for relational queries, served via FastAPI to a React front-end.
 
 ## Architecture
 
 ```
-IMDB TSV.GZ → Parquet → DuckDB ──→ FastAPI → React + Vite
-                           ↓
-                         Neo4j (graph analytics)
+IMDB TSV.GZ → Parquet (back-end/data/) → DuckDB (imdb.duckdb) → Neo4j graph
+                                                  ↓
+                                    FastAPI (back-end/) → React + Vite (front-end/)
 ```
 
 | Layer | Technology |
 |---|---|
-| Relational store | DuckDB (Parquet files) |
-| Graph store | Neo4j |
-| API | FastAPI + Granian |
-| Front-end | React 19 · TypeScript · Vite · Tailwind CSS · shadcn/ui |
+| Relational store | DuckDB · Parquet |
+| Graph store | Neo4j (Docker) |
+| API | FastAPI · Granian |
+| Front-end | React 19 · React Router 7 · TypeScript · Vite · Tailwind CSS 4 · shadcn/ui |
 
 ## Quick Start
 
 ```bash
-# 1. Start infrastructure (Neo4j Docker container)
+# 1. Copy .env and set NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD
+# 2. Start Neo4j
 make install
 
-# 2. Seed data — downloads IMDB, builds Parquet, loads DuckDB & Neo4j
-make seed-sample   # ~1,000 titles, fast (dev/testing)
-# make seed        # full dataset (~30 min, ~1.5 GB download)
+# 3. Seed data
+make seed-sample   # ~1,000 titles (dev/testing)
+# make seed        # full dataset (~30 min, ~1.5 GB)
 
-# 3. Start all dev servers
+# 4. Start dev servers
 make dev
 ```
 
-The React app runs at `http://localhost:3000`; the API at `http://localhost:8000`.
+App: `http://localhost:3000` · API: `http://localhost:8000`

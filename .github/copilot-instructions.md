@@ -69,9 +69,10 @@ uv run --directory back-end fastapi dev app/main.py  # back-end only
 # Front-end
 cd front-end && bun run dev    # Vite dev server on port 3000
 cd front-end && bun run build
-```
 
-There are no tests yet; `tests/` has only `.gitkeep`.
+# Tests (back-end)
+uv run python -m unittest discover back-end/tests
+```
 
 ## Environment
 
@@ -97,15 +98,32 @@ Neo4j container must be running (`make install`) before seeding the graph. The c
 - DuckDB connection singleton in `core/database.py`; inject via `DuckDBDep` (Annotated type in `dependencies.py`)
 - Neo4j is seeded in batches of 5,000 records per transaction; maintain this pattern for bulk writes
 - Use the `_int()` / `_float()` helpers when reading IMDB data that may contain `\N` sentinel values
+- **Service concurrency**: Use `ThreadPoolExecutor(max_workers=4)` for independent DuckDB queries within a single service call
+- **Repository SQL templates**: SQL strings are module-level `_*_TEMPLATE` constants with `{source_table}` placeholders; `_resolve_source_relation()` maps boolean toggles to the correct DuckDB view or `None` (base tables)
+- **Startup actions**: Register startup work in the `STARTUP_ACTIONS` tuple in `core/startup.py` as `(name, callable)` pairs
+- **Pydantic schemas** live in `schemas/`; `models/` is intentionally empty
+- **Tests**: `unittest`-based in `back-end/tests/`; use custom fake classes (e.g., `_FakeDuckDBConnection`) to mock DuckDB — never use real DB connections in unit tests
 
 ### Front-End (TypeScript)
 
 - **Package manager**: Bun — never use npm; install packages with `bun add`, run scripts with `bun run`
 - **Stack**: React 19 · React Router 7 · TypeScript strict · Vite 8 · Tailwind CSS 4 · shadcn/ui
+- **Data fetching**: TanStack React Query 5 — `useQuery` with stable array keys; `keepPreviousData` for smooth refetches
+- **State management**: `use-immer` — mutate draft in callbacks: `setFilters(draft => { draft.field = value })`
+- **Filter state**: owned by `Analytics.tsx`, passed as props; `FilterPanel` is a controlled component
 - Path alias `@` → `src/`
-- Vite dev server on port 3000 proxies `/api` → `http://localhost:8000`
+- Vite dev server on port 3000 proxies `/api/*` → `http://localhost:8000/*` (strips `/api` prefix)
 - Add shadcn components: `bunx --bun shadcn@latest add <component>`
-- Icons: `@hugeicons/react`
+- Icons: `@hugeicons/react` (primary), `lucide-react` (secondary)
+
+## Specs
+
+All feature specifications live in `specs/`:
+
+- [specs/back-end/filter_options.md](../specs/back-end/filter_options.md) — filter-options endpoint contract, SQL templates, source relation logic
+- [specs/back-end/startup_check.md](../specs/back-end/startup_check.md) — startup action requirements
+- [specs/front-end/filter_params.md](../specs/front-end/filter_params.md) — filter state flow, hook contract, refetch triggers
+- [specs/patterns/front-end/custom_http_hook.md](../specs/patterns/front-end/custom_http_hook.md) — custom HTTP hook pattern
 
 ## Common Pitfalls
 
