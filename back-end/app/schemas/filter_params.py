@@ -18,7 +18,7 @@ class NumericRangeFloat(BaseModel):
     max: float | None
 
 
-class FilterOptionsResponse(BaseModel):
+class FilterParamsResponse(BaseModel):
     genres: list[str]
     titleTypes: list[TitleTypeOption]
     yearRange: NumericRangeInt

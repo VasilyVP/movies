@@ -8,14 +8,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.core.database import get_duckdb
-from app.api.endpoints.titles import router as titles_router
-from app.schemas.filter_options import (
-    FilterOptionsResponse,
+from app.api.endpoints.query import router as query_router
+from app.schemas.filter_params import (
+    FilterParamsResponse,
     NumericRangeFloat,
     NumericRangeInt,
     TitleTypeOption,
 )
-from app.services import filter_service
+from app.services import query_options_service
 
 
 class _FakeDuckDBResult:
@@ -110,12 +110,12 @@ class _SparseFakeDuckDBConnection:
 
 class FilterOptionsServiceTests(unittest.TestCase):
     def tearDown(self) -> None:
-        filter_service.get_filter_options.cache_clear()
+        query_options_service.get_filter_options.cache_clear()
 
     def test_get_filter_options_returns_expected_payload_shape(self) -> None:
         conn = _FakeDuckDBConnection()
 
-        payload = filter_service.get_filter_options(conn)
+        payload = query_options_service.get_filter_options(conn)
 
         self.assertEqual(payload.genres, ["Action", "Comedy"])
         self.assertEqual(
@@ -132,8 +132,8 @@ class FilterOptionsServiceTests(unittest.TestCase):
     def test_get_filter_options_uses_cache_after_first_call(self) -> None:
         conn = _FakeDuckDBConnection()
 
-        first = filter_service.get_filter_options(conn)
-        second = filter_service.get_filter_options(conn)
+        first = query_options_service.get_filter_options(conn)
+        second = query_options_service.get_filter_options(conn)
 
         self.assertEqual(first, second)
         self.assertEqual(conn.query_count, 4)
@@ -141,9 +141,9 @@ class FilterOptionsServiceTests(unittest.TestCase):
     def test_get_filter_options_cache_is_split_by_flag_combination(self) -> None:
         conn = _FakeDuckDBConnection()
 
-        first = filter_service.get_filter_options(conn)
-        second = filter_service.get_filter_options(conn)
-        third = filter_service.get_filter_options(conn, top_rated=True)
+        first = query_options_service.get_filter_options(conn)
+        second = query_options_service.get_filter_options(conn)
+        third = query_options_service.get_filter_options(conn, top_rated=True)
 
         self.assertEqual(first, second)
         self.assertNotEqual(first, third)
@@ -152,27 +152,34 @@ class FilterOptionsServiceTests(unittest.TestCase):
     def test_get_filter_options_top_rated_uses_top_rated_view(self) -> None:
         conn = _FakeDuckDBConnection()
 
-        payload = filter_service.get_filter_options(conn, top_rated=True)
+        payload = query_options_service.get_filter_options(conn, top_rated=True)
 
         self.assertEqual(payload.genres, ["Drama", "Thriller"])
         self.assertEqual(payload.yearRange, NumericRangeInt(min=1950, max=2022))
         self.assertEqual(payload.ratingRange, NumericRangeFloat(min=8.0, max=9.9))
-        self.assertTrue(all("from top_rated_titles" in query.lower() for query in conn.executed_sql))
+        self.assertTrue(
+            all("from top_rated_titles" in query.lower() for query in conn.executed_sql)
+        )
 
     def test_get_filter_options_most_popular_uses_most_popular_view(self) -> None:
         conn = _FakeDuckDBConnection()
 
-        payload = filter_service.get_filter_options(conn, most_popular=True)
+        payload = query_options_service.get_filter_options(conn, most_popular=True)
 
         self.assertEqual(payload.genres, ["Action", "Adventure"])
         self.assertEqual(payload.yearRange, NumericRangeInt(min=1980, max=2024))
         self.assertEqual(payload.ratingRange, NumericRangeFloat(min=5.5, max=9.5))
-        self.assertTrue(all("from most_popular_titles" in query.lower() for query in conn.executed_sql))
+        self.assertTrue(
+            all(
+                "from most_popular_titles" in query.lower()
+                for query in conn.executed_sql
+            )
+        )
 
     def test_get_filter_options_with_both_flags_uses_combined_view(self) -> None:
         conn = _FakeDuckDBConnection()
 
-        payload = filter_service.get_filter_options(
+        payload = query_options_service.get_filter_options(
             conn,
             top_rated=True,
             most_popular=True,
@@ -181,67 +188,90 @@ class FilterOptionsServiceTests(unittest.TestCase):
         self.assertEqual(payload.genres, ["Crime", "Drama"])
         self.assertEqual(payload.yearRange, NumericRangeInt(min=1990, max=2021))
         self.assertEqual(payload.ratingRange, NumericRangeFloat(min=8.2, max=9.8))
-        self.assertTrue(all("from top_rated_popular_titles" in query.lower() for query in conn.executed_sql))
+        self.assertTrue(
+            all(
+                "from top_rated_popular_titles" in query.lower()
+                for query in conn.executed_sql
+            )
+        )
 
     def test_get_filter_options_handles_sparse_data(self) -> None:
         conn = _SparseFakeDuckDBConnection()
 
-        payload = filter_service.get_filter_options(conn)
+        payload = query_options_service.get_filter_options(conn)
 
-        self.assertEqual(payload, FilterOptionsResponse(
-            genres=[],
-            titleTypes=[],
-            yearRange=NumericRangeInt(min=None, max=None),
-            ratingRange=NumericRangeFloat(min=None, max=None),
-        ))
+        self.assertEqual(
+            payload,
+            FilterParamsResponse(
+                genres=[],
+                titleTypes=[],
+                yearRange=NumericRangeInt(min=None, max=None),
+                ratingRange=NumericRangeFloat(min=None, max=None),
+            ),
+        )
 
 
 class FilterOptionsEndpointTests(unittest.TestCase):
     def test_filters_endpoint_returns_service_payload(self) -> None:
         app = FastAPI()
-        app.include_router(titles_router, prefix="/api/titles", tags=["titles"])
+        app.include_router(query_router, prefix="/api/query", tags=["query"])
 
         app.dependency_overrides[get_duckdb] = lambda: object()
 
-        expected = FilterOptionsResponse(
+        expected = FilterParamsResponse(
             genres=["Action"],
             titleTypes=[TitleTypeOption(value="movie", label="Movie")],
             yearRange=NumericRangeInt(min=1900, max=2024),
             ratingRange=NumericRangeFloat(min=1.0, max=10.0),
         )
 
-        with patch("app.api.endpoints.titles.filter_service.get_filter_options", return_value=expected) as mocked_get_filter_options:
+        with patch(
+            "app.api.endpoints.query.query_options_service.get_filter_options",
+            return_value=expected,
+        ) as mocked_get_filter_options:
             with TestClient(app) as client:
-                response = client.get("/api/titles/filters")
+                response = client.get("/api/query/filter-options")
 
         self.assertEqual(response.status_code, 200)
-        mocked_get_filter_options.assert_called_once_with(ANY, top_rated=False, most_popular=False)
-        self.assertEqual(response.json(), {
-            "genres": ["Action"],
-            "titleTypes": [{"value": "movie", "label": "Movie"}],
-            "yearRange": {"min": 1900, "max": 2024},
-            "ratingRange": {"min": 1.0, "max": 10.0},
-        })
+        mocked_get_filter_options.assert_called_once_with(
+            ANY, top_rated=False, most_popular=False
+        )
+        self.assertEqual(
+            response.json(),
+            {
+                "genres": ["Action"],
+                "titleTypes": [{"value": "movie", "label": "Movie"}],
+                "yearRange": {"min": 1900, "max": 2024},
+                "ratingRange": {"min": 1.0, "max": 10.0},
+            },
+        )
 
     def test_filters_endpoint_forwards_query_flags(self) -> None:
         app = FastAPI()
-        app.include_router(titles_router, prefix="/api/titles", tags=["titles"])
+        app.include_router(query_router, prefix="/api/query", tags=["query"])
 
         app.dependency_overrides[get_duckdb] = lambda: object()
 
-        expected = FilterOptionsResponse(
+        expected = FilterParamsResponse(
             genres=["Drama"],
             titleTypes=[TitleTypeOption(value="movie", label="Movie")],
             yearRange=NumericRangeInt(min=1950, max=2022),
             ratingRange=NumericRangeFloat(min=8.0, max=9.9),
         )
 
-        with patch("app.api.endpoints.titles.filter_service.get_filter_options", return_value=expected) as mocked_get_filter_options:
+        with patch(
+            "app.api.endpoints.query.query_options_service.get_filter_options",
+            return_value=expected,
+        ) as mocked_get_filter_options:
             with TestClient(app) as client:
-                response = client.get("/api/titles/filters?topRated=true&mostPopular=true")
+                response = client.get(
+                    "/api/query/filter-options?topRated=true&mostPopular=true"
+                )
 
         self.assertEqual(response.status_code, 200)
-        mocked_get_filter_options.assert_called_once_with(ANY, top_rated=True, most_popular=True)
+        mocked_get_filter_options.assert_called_once_with(
+            ANY, top_rated=True, most_popular=True
+        )
 
 
 if __name__ == "__main__":

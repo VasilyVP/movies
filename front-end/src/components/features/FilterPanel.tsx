@@ -3,19 +3,130 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useCallback, useEffect } from "react";
 import { Filter, TrendingUp, Users } from "lucide-react";
+import { useFilterOptions, type FilterOptionsResponse } from "@/hooks/useFilterOptions";
+
+export type FilterState = {
+  topRated: boolean;
+  mostPopular: boolean;
+  search: string;
+  genre: string | null;
+  titleType: string | null;
+  ratingRange: [number, number] | null;
+  yearRange: [number, number] | null;
+};
 
 type FilterPanelProps = {
+  filters: FilterState;
+  setFilters: (updater: (draft: FilterState) => void) => void;
   titleCount?: number | null;
   personCount?: number | null;
 };
 
 const quickQueries = [
-  { icon: TrendingUp, label: "Top Rated", description: "Highest rated titles" },
-  { icon: Users, label: "Most Popular", description: "By number of votes" },
+  {
+    icon: TrendingUp,
+    label: "Top Rated",
+    description: "Highest rated titles",
+    toggle: "topRated" as const,
+  },
+  {
+    icon: Users,
+    label: "Most Popular",
+    description: "By number of votes",
+    toggle: "mostPopular" as const,
+  },
 ];
 
-export function FilterPanel({ titleCount = null, personCount = null }: FilterPanelProps) {
+const EMPTY_OPTIONS: FilterOptionsResponse = {
+  genres: [],
+  titleTypes: [],
+  yearRange: { min: null, max: null },
+  ratingRange: { min: null, max: null },
+};
+
+function clampRange(range: [number, number], min: number, max: number): [number, number] {
+  const clampedMin = Math.min(Math.max(range[0], min), max);
+  const clampedMax = Math.min(Math.max(range[1], min), max);
+  return clampedMin <= clampedMax ? [clampedMin, clampedMax] : [clampedMax, clampedMin];
+}
+
+export function FilterPanel({
+  filters,
+  setFilters,
+  titleCount = null,
+  personCount = null,
+}: FilterPanelProps) {
+  const handleToggleChange = useCallback(
+    (toggle: "topRated" | "mostPopular", value: boolean) => {
+      setFilters((draft) => {
+        draft[toggle] = value;
+      });
+    },
+    [setFilters],
+  );
+
+  const handleFieldChange = useCallback(
+    <T extends keyof Omit<FilterState, "topRated" | "mostPopular">>(
+      field: T,
+      value: FilterState[T],
+    ) => {
+      setFilters((draft) => {
+        draft[field] = value;
+      });
+    },
+    [setFilters],
+  );
+
+  const handleOptionsRefresh = useCallback(
+    (options: FilterOptionsResponse) => {
+      setFilters((draft) => {
+        const validGenres = new Set(options.genres);
+        if (draft.genre && !validGenres.has(draft.genre)) {
+          draft.genre = null;
+        }
+
+        const validTitleTypes = new Set(options.titleTypes.map((item) => item.value));
+        if (draft.titleType && !validTitleTypes.has(draft.titleType)) {
+          draft.titleType = null;
+        }
+
+        if (options.ratingRange.min !== null && options.ratingRange.max !== null) {
+          if (draft.ratingRange === null) {
+            draft.ratingRange = [options.ratingRange.min, options.ratingRange.max];
+          } else {
+            draft.ratingRange = clampRange(draft.ratingRange, options.ratingRange.min, options.ratingRange.max);
+          }
+        }
+
+        if (options.yearRange.min !== null && options.yearRange.max !== null) {
+          if (draft.yearRange === null) {
+            draft.yearRange = [options.yearRange.min, options.yearRange.max];
+          } else {
+            draft.yearRange = clampRange(draft.yearRange, options.yearRange.min, options.yearRange.max);
+          }
+        }
+      });
+    },
+    [setFilters],
+  );
+
+  const filterOptionsQuery = useFilterOptions({
+    topRated: filters.topRated,
+    mostPopular: filters.mostPopular,
+  });
+
+  useEffect(() => {
+    if (filterOptionsQuery.data) {
+      handleOptionsRefresh(filterOptionsQuery.data);
+    }
+  }, [filterOptionsQuery.data, handleOptionsRefresh]);
+
+  const options = filterOptionsQuery.data ?? EMPTY_OPTIONS;
+  const isInitialLoad = filterOptionsQuery.isLoading && !filterOptionsQuery.data;
+  const hasNoOptions = !filterOptionsQuery.data && !isInitialLoad;
+
   const formatCount = (value: number | null | undefined): string => {
     return typeof value === "number" ? value.toLocaleString() : "N/A";
   };
@@ -48,6 +159,8 @@ export function FilterPanel({ titleCount = null, personCount = null }: FilterPan
           id="filter-search"
           placeholder="Search by title or person..."
           className="bg-neutral-900 border-neutral-800"
+          value={filters.search}
+          onChange={(event) => handleFieldChange("search", event.target.value)}
         />
       </div>
 
@@ -58,7 +171,14 @@ export function FilterPanel({ titleCount = null, personCount = null }: FilterPan
           {quickQueries.map((query, idx) => (
             <button
               key={idx}
-              className="p-3 rounded-lg border border-neutral-800 bg-neutral-900/50 hover:bg-neutral-900 hover:border-neutral-700 transition-colors text-left"
+              type="button"
+              onClick={() => handleToggleChange(query.toggle, !filters[query.toggle])}
+              className={[
+                "p-3 rounded-lg border transition-colors text-left",
+                filters[query.toggle]
+                  ? "border-neutral-500 bg-neutral-800/80"
+                  : "border-neutral-800 bg-neutral-900/50 hover:bg-neutral-900 hover:border-neutral-700",
+              ].join(" ")}
             >
               <query.icon className="w-4 h-4 text-neutral-400 mb-2" />
               <div className="text-xs text-neutral-300">{query.label}</div>
@@ -72,10 +192,26 @@ export function FilterPanel({ titleCount = null, personCount = null }: FilterPan
       <div className="space-y-3">
         <Label className="text-xs text-neutral-400">IMDB Rating</Label>
         <div className="space-y-2">
-          <Slider defaultValue={[7.0, 9.0]} min={0} max={10} step={0.1} className="w-full" />
-          <div className="flex justify-between text-xs text-neutral-500">
-            <span>7.0</span>
-            <span>9.0</span>
+          <Slider
+            value={filters.ratingRange ?? [0, 10]}
+            min={options.ratingRange.min ?? 0}
+            max={options.ratingRange.max ?? 10}
+            step={0.1}
+            className="w-full"
+            disabled={options.ratingRange.min === null || options.ratingRange.max === null}
+            thumbLabels={[
+              filters.ratingRange?.[0]?.toFixed(1) ?? "-",
+              filters.ratingRange?.[1]?.toFixed(1) ?? "-",
+            ]}
+            onValueChange={(nextValue) => {
+              if (nextValue.length >= 2) {
+                handleFieldChange("ratingRange", [nextValue[0], nextValue[1]]);
+              }
+            }}
+          />
+          <div className="flex justify-between text-xs text-neutral-600">
+            <span>{options.ratingRange.min?.toFixed(1) ?? "-"}</span>
+            <span>{options.ratingRange.max?.toFixed(1) ?? "-"}</span>
           </div>
         </div>
       </div>
@@ -84,10 +220,26 @@ export function FilterPanel({ titleCount = null, personCount = null }: FilterPan
       <div className="space-y-3">
         <Label className="text-xs text-neutral-400">Release Year</Label>
         <div className="space-y-2">
-          <Slider defaultValue={[1990, 2024]} min={1900} max={2024} step={1} className="w-full" />
-          <div className="flex justify-between text-xs text-neutral-500">
-            <span>1990</span>
-            <span>2024</span>
+          <Slider
+            value={filters.yearRange ?? [1900, 2024]}
+            min={options.yearRange.min ?? 1900}
+            max={options.yearRange.max ?? 2024}
+            step={1}
+            className="w-full"
+            disabled={options.yearRange.min === null || options.yearRange.max === null}
+            thumbLabels={[
+              String(filters.yearRange?.[0] ?? "-"),
+              String(filters.yearRange?.[1] ?? "-"),
+            ]}
+            onValueChange={(nextValue) => {
+              if (nextValue.length >= 2) {
+                handleFieldChange("yearRange", [Math.round(nextValue[0]), Math.round(nextValue[1])]);
+              }
+            }}
+          />
+          <div className="flex justify-between text-xs text-neutral-600">
+            <span>{options.yearRange.min ?? "-"}</span>
+            <span>{options.yearRange.max ?? "-"}</span>
           </div>
         </div>
       </div>
@@ -96,36 +248,56 @@ export function FilterPanel({ titleCount = null, personCount = null }: FilterPan
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-3">
           <Label className="text-xs text-neutral-400">Genre</Label>
-          <Select>
+          <Select
+            value={filters.genre ?? undefined}
+            onValueChange={(value) => handleFieldChange("genre", value === "all" ? null : value)}
+          >
             <SelectTrigger className="w-full bg-neutral-900 border-neutral-800">
               <SelectValue placeholder="All genres" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All genres</SelectItem>
-              <SelectItem value="action">Action</SelectItem>
-              <SelectItem value="comedy">Comedy</SelectItem>
-              <SelectItem value="drama">Drama</SelectItem>
-              <SelectItem value="horror">Horror</SelectItem>
-              <SelectItem value="scifi">Sci-Fi</SelectItem>
-              <SelectItem value="thriller">Thriller</SelectItem>
+              {options.genres.map((genre) => (
+                <SelectItem key={genre} value={genre}>{genre}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
 
         <div className="space-y-3">
           <Label className="text-xs text-neutral-400">Type</Label>
-          <Select>
+          <Select
+            value={filters.titleType ?? undefined}
+            onValueChange={(value) => handleFieldChange("titleType", value === "all" ? null : value)}
+          >
             <SelectTrigger className="w-full bg-neutral-900 border-neutral-800">
               <SelectValue placeholder="All types" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All types</SelectItem>
-              <SelectItem value="movie">Movie</SelectItem>
-              <SelectItem value="tvSeries">TV Series</SelectItem>
+              {options.titleTypes.map((option) => (
+                <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
       </div>
+
+      {isInitialLoad && (
+        <div className="rounded-lg border border-neutral-800 bg-neutral-900/30 px-3 py-2 text-xs text-neutral-400">
+          Loading filter options...
+        </div>
+      )}
+
+      {filterOptionsQuery.error && (
+        <div className="rounded-lg border border-red-900/80 bg-red-950/30 px-3 py-2 text-xs text-red-200">
+          Failed to refresh filter options. {hasNoOptions ? "No options are available for this toggle combination yet." : "Showing the last available options."}
+        </div>
+      )}
+
+      {filterOptionsQuery.isFetching && !isInitialLoad && (
+        <div className="text-[11px] text-neutral-500">Refreshing options for the selected toggles...</div>
+      )}
 
       <Button size="lg" className="w-full">
         Show graph

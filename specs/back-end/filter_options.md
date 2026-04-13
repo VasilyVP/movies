@@ -5,7 +5,7 @@ Provide one endpoint that returns all UI filter options for titles in a single r
 
 ## Endpoint
 - Method: GET
-- Path: /api/titles/filters
+- Path: /query/filter-options
 
 ## Query Parameters
 - `topRated` (optional, boolean, default: `false`)
@@ -14,10 +14,10 @@ Provide one endpoint that returns all UI filter options for titles in a single r
 These flags are independent and can be used in any combination.
 
 Examples:
-- `/api/titles/filters`
-- `/api/titles/filters?topRated=true`
-- `/api/titles/filters?mostPopular=true`
-- `/api/titles/filters?topRated=true&mostPopular=true`
+- `/query/filter-options`
+- `/query/filter-options?topRated=true`
+- `/query/filter-options?mostPopular=true`
+- `/query/filter-options?topRated=true&mostPopular=true`
 
 ## Response Shape
 ```json

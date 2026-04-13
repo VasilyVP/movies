@@ -2,10 +2,23 @@ import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/componen
 import { Separator } from "@/components/ui/separator";
 import { Search } from "lucide-react";
 import { GraphVisualization } from "@/components/features/GraphVisualization";
-import { FilterPanel } from "@/components/features/FilterPanel";
+import { FilterPanel, type FilterState } from "@/components/features/FilterPanel";
 import { QueryPanel } from "@/components/features/QueryPanel";
+import { useImmer } from "use-immer";
+
+const INITIAL_FILTER_STATE: FilterState = {
+  topRated: false,
+  mostPopular: false,
+  search: "",
+  genre: null,
+  titleType: null,
+  ratingRange: null,
+  yearRange: null,
+};
 
 export default function Analytics() {
+  const [filters, setFilters] = useImmer<FilterState>(INITIAL_FILTER_STATE);
+
   return (
     <ResizablePanelGroup orientation="horizontal" className="size-full overflow-hidden">
         {/* Left Panel - Graph Visualization */}
@@ -20,7 +33,10 @@ export default function Analytics() {
           <div className="h-full flex flex-col overflow-auto">
             {/* Filters Section */}
             <div className="p-6">
-              <FilterPanel />
+              <FilterPanel
+                filters={filters}
+                setFilters={setFilters}
+              />
             </div>
 
             <Separator className="bg-neutral-800" />

@@ -1,4 +1,3 @@
-
 import { BrowserRouter, Route, Routes } from "react-router"
 import { AppHeader } from "@/components/features/AppHeader"
 import Analytics from "./routes/Analytics/Analytics"

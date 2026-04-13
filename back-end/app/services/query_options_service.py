@@ -7,9 +7,9 @@ import re
 
 import duckdb
 
-from app.repositories import filter_repository
-from app.schemas.filter_options import (
-    FilterOptionsResponse,
+from app.repositories import query_params_repository
+from app.schemas.filter_params import (
+    FilterParamsResponse,
     NumericRangeFloat,
     NumericRangeInt,
     TitleTypeOption,
@@ -32,7 +32,9 @@ def _format_title_type_label(value: str) -> str:
     return " ".join(part.capitalize() for part in normalized.split())
 
 
-def _cursor_or_self(duckdb_conn: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyConnection:
+def _cursor_or_self(
+    duckdb_conn: duckdb.DuckDBPyConnection,
+) -> duckdb.DuckDBPyConnection:
     if hasattr(duckdb_conn, "cursor"):
         return duckdb_conn.cursor()
     return duckdb_conn
@@ -41,7 +43,7 @@ def _cursor_or_self(duckdb_conn: duckdb.DuckDBPyConnection) -> duckdb.DuckDBPyCo
 def _resolve_source_relation(
     top_rated: bool,
     most_popular: bool,
-) -> filter_repository.SourceRelation | None:
+) -> query_params_repository.SourceRelation | None:
     if top_rated and most_popular:
         return "top_rated_popular_titles"
     if top_rated:
@@ -56,28 +58,28 @@ def get_filter_options(
     duckdb_conn: duckdb.DuckDBPyConnection,
     top_rated: bool = False,
     most_popular: bool = False,
-) -> FilterOptionsResponse:
+) -> FilterParamsResponse:
     source_relation = _resolve_source_relation(top_rated, most_popular)
 
     # These lookups are independent and can be fetched concurrently.
     with ThreadPoolExecutor(max_workers=4) as executor:
         genres_future = executor.submit(
-            filter_repository.get_genres,
+            query_params_repository.get_genres,
             _cursor_or_self(duckdb_conn),
             source_relation,
         )
         title_types_future = executor.submit(
-            filter_repository.get_title_types,
+            query_params_repository.get_title_types,
             _cursor_or_self(duckdb_conn),
             source_relation,
         )
         year_range_future = executor.submit(
-            filter_repository.get_year_range,
+            query_params_repository.get_year_range,
             _cursor_or_self(duckdb_conn),
             source_relation,
         )
         rating_range_future = executor.submit(
-            filter_repository.get_rating_range,
+            query_params_repository.get_rating_range,
             _cursor_or_self(duckdb_conn),
             source_relation,
         )
@@ -90,7 +92,7 @@ def get_filter_options(
     if max_year is not None:
         max_year = min(max_year, datetime.date.today().year + 5)
 
-    return FilterOptionsResponse(
+    return FilterParamsResponse(
         genres=genres,
         titleTypes=[
             TitleTypeOption(value=value, label=_format_title_type_label(value))
