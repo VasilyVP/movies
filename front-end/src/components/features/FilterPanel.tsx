@@ -5,8 +5,11 @@ import { Button } from "@/components/ui/button";
 import { useCallback, useEffect } from "react";
 import { Filter, TrendingUp, Users } from "lucide-react";
 import { useFilterOptions, type FilterOptionsResponse } from "@/hooks/useFilterOptions";
+import { useItemsFound } from "@/hooks/useItemsFound";
+import { useDebounce } from "@uidotdev/usehooks";
 import { SearchAutocomplete } from "@/components/features/SearchAutocomplete";
 import type { SearchResultItem } from "@/hooks/useSearch";
+import loadingSpinner from "@/assets/loading-svgrepo-com.svg";
 
 export type FilterState = {
   topRated: boolean;
@@ -22,8 +25,9 @@ export type FilterState = {
 type FilterPanelProps = {
   filters: FilterState;
   setFilters: (updater: (draft: FilterState) => void) => void;
-  titleCount?: number | null;
-  personCount?: number | null;
+  onShowGraph: () => void;
+  isGraphLoading: boolean;
+  hasGraphRequested: boolean;
 };
 
 const quickQueries = [
@@ -57,8 +61,9 @@ function clampRange(range: [number, number], min: number, max: number): [number,
 export function FilterPanel({
   filters,
   setFilters,
-  titleCount = null,
-  personCount = null,
+  onShowGraph,
+  isGraphLoading,
+  hasGraphRequested,
 }: FilterPanelProps) {
   const handleToggleChange = useCallback(
     (toggle: "topRated" | "mostPopular", value: boolean) => {
@@ -119,6 +124,24 @@ export function FilterPanel({
     mostPopular: filters.mostPopular,
   });
 
+  const itemsFoundParams = {
+    titleId: filters.selectedSearchResult?.primaryTitle ? filters.selectedSearchResult.id : null,
+    nameId: filters.selectedSearchResult?.name ? filters.selectedSearchResult.id : null,
+    titleType: filters.titleType,
+    genre: filters.genre,
+    ratingRangeFrom: filters.ratingRange?.[0] ?? null,
+    ratingRangeTo: filters.ratingRange?.[1] ?? null,
+    releaseYearFrom: filters.yearRange?.[0] ?? null,
+    releaseYearTo: filters.yearRange?.[1] ?? null,
+    topRated: filters.topRated,
+    mostPopular: filters.mostPopular,
+  };
+
+  const debouncedItemsFoundParams = useDebounce(itemsFoundParams, 500);
+
+  const itemsFoundQuery = useItemsFound(debouncedItemsFoundParams);
+  const isItemsFoundLoading = itemsFoundQuery.isLoading || itemsFoundQuery.isFetching;
+
   useEffect(() => {
     if (filterOptionsQuery.data) {
       handleOptionsRefresh(filterOptionsQuery.data);
@@ -131,11 +154,30 @@ export function FilterPanel({
     return typeof value === "number" ? value.toLocaleString() : "N/A";
   };
 
+  const totalTitles = itemsFoundQuery.data?.totalTitles;
+  const totalPersons = itemsFoundQuery.data?.totalPersons;
+  const areCountsAvailable = typeof totalTitles === "number" && typeof totalPersons === "number";
+  const shouldDisableShowGraph = !areCountsAvailable || totalTitles > 1000 || totalPersons > 1000 || isGraphLoading;
+
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
         <Filter className="h-4 w-4 text-neutral-400" />
         <h2 className="m-0 text-sm font-normal tracking-tight text-neutral-300">Filters</h2>
+        {isItemsFoundLoading && (
+          <span
+            role="status"
+            aria-label="Loading item counts"
+            className="inline-flex h-4 w-4 items-center justify-center"
+          >
+            <img
+              src={loadingSpinner}
+              alt=""
+              aria-hidden="true"
+              className="h-4 w-4 animate-[spin_2.4s_linear_infinite]"
+            />
+          </span>
+        )}
       </div>
 
       {/* Status */}
@@ -143,11 +185,11 @@ export function FilterPanel({
         <div className="grid grid-cols-2 gap-4 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-neutral-500">Titles Found</span>
-            <span className="font-medium text-neutral-200">{formatCount(titleCount)}</span>
+            <span className="font-medium text-neutral-200">{formatCount(itemsFoundQuery.data?.totalTitles)}</span>
           </div>
           <div className="flex items-center justify-between">
             <span className="text-neutral-500">Persons Found</span>
-            <span className="font-medium text-neutral-200">{formatCount(personCount)}</span>
+            <span className="font-medium text-neutral-200">{formatCount(itemsFoundQuery.data?.totalPersons)}</span>
           </div>
         </div>
       </div>
@@ -280,8 +322,21 @@ export function FilterPanel({
         </div>
       </div>
 
-      <Button size="lg" className="w-full">
-        Show graph
+      <Button
+        size="lg"
+        className="w-full"
+        disabled={shouldDisableShowGraph}
+        onClick={onShowGraph}
+      >
+        {isGraphLoading && (
+          <img
+            src={loadingSpinner}
+            alt=""
+            aria-hidden="true"
+            className="mr-2 h-4 w-4 animate-[spin_2.4s_linear_infinite]"
+          />
+        )}
+        {isGraphLoading ? "Building graph..." : hasGraphRequested ? "Update graph" : "Show graph"} {(!isGraphLoading && shouldDisableShowGraph) && "(<=1,000 items required)"}
       </Button>
 
     </div>

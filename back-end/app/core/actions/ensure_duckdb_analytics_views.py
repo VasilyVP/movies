@@ -10,14 +10,23 @@ def execute(duckdb_conn: duckdb.DuckDBPyConnection) -> None:
 
     duckdb_conn.execute(
         """
+        CREATE OR REPLACE VIEW all_titles_ratings AS
+        SELECT *
+        FROM title_basics
+        JOIN title_ratings USING (tconst)
+        """
+    )
+
+    duckdb_conn.execute(
+        """
         CREATE OR REPLACE VIEW top_rated_titles AS
         SELECT *
         FROM (
           SELECT
             *,
             NTILE(5) OVER (ORDER BY averageRating DESC) AS bucket
-          FROM title_ratings
-          JOIN title_basics USING (tconst)
+          FROM title_basics
+          JOIN title_ratings USING (tconst)
         ) t
         WHERE bucket = 1;
         """
@@ -31,8 +40,8 @@ def execute(duckdb_conn: duckdb.DuckDBPyConnection) -> None:
           SELECT
             *,
             NTILE(5) OVER (ORDER BY numVotes DESC) AS bucket
-          FROM title_ratings
-          JOIN title_basics USING (tconst)
+          FROM title_basics
+          JOIN title_ratings USING (tconst)
         ) t
         WHERE bucket = 1;
         """
@@ -47,8 +56,8 @@ def execute(duckdb_conn: duckdb.DuckDBPyConnection) -> None:
             *,
             NTILE(5) OVER (ORDER BY averageRating DESC) AS rating_bucket,
             NTILE(5) OVER (ORDER BY numVotes DESC) AS popularity_bucket
-          FROM title_ratings
-          JOIN title_basics USING (tconst)
+          FROM title_basics
+          JOIN title_ratings USING (tconst)
         ) t
         WHERE rating_bucket = 1
           AND popularity_bucket = 1;

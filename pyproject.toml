@@ -11,5 +11,6 @@ dependencies = [
     "neo4j>=5.0",
     "pydantic-settings>=2.13.1",
     "python-dotenv",
+    "slowapi>=0.1.9",
     "tqdm",
 ]

@@ -2,18 +2,29 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
+from neo4j.exceptions import AuthError, Neo4jError, ServiceUnavailable
 
 from app.api.dependencies import DuckDBDep
+from app.core.limiter import limiter
 from app.schemas.filter_params import FilterParamsResponse
+from app.schemas.graph_data import GraphDataParams, GraphDataResponse
+from app.schemas.items_found import ItemsFoundParams, ItemsFoundResponse
 from app.schemas.search import SearchQueryParams, SearchResponse
-from app.services import query_options_service, search_service
+from app.services import (
+    graph_data_service,
+    items_found_service,
+    query_options_service,
+    search_service,
+)
 
 router = APIRouter()
 
 
 @router.get("/filter-options", response_model=FilterParamsResponse)
+@limiter.limit("2/second")  # type: ignore[misc]
 def get_filter_options(
+    request: Request,
     duckdb: DuckDBDep,
     top_rated: Annotated[bool, Query(alias="topRated")] = False,
     most_popular: Annotated[bool, Query(alias="mostPopular")] = False,
@@ -26,8 +37,36 @@ def get_filter_options(
 
 
 @router.get("/search", response_model=SearchResponse, response_model_exclude_none=True)
+@limiter.limit("3/second")  # type: ignore[misc]
 def search(
+    request: Request,
     duckdb: DuckDBDep,
     params: Annotated[SearchQueryParams, Query()],
 ) -> SearchResponse:
     return search_service.search(duckdb, params)
+
+
+@router.get("/items-found", response_model=ItemsFoundResponse)
+@limiter.limit("2/second")  # type: ignore[misc]
+def get_items_found(
+    request: Request,
+    duckdb: DuckDBDep,
+    params: Annotated[ItemsFoundParams, Query()],
+) -> ItemsFoundResponse:
+    return items_found_service.get_items_found(duckdb, params)
+
+
+@router.get("/graph-data", response_model=GraphDataResponse)
+@limiter.limit("1/second")  # type: ignore[misc]
+def get_graph_data(
+    request: Request,
+    duckdb: DuckDBDep,
+    params: Annotated[GraphDataParams, Query()],
+) -> GraphDataResponse:
+    try:
+        return graph_data_service.get_graph_data(duckdb, params)
+    except (Neo4jError, ServiceUnavailable, AuthError, OSError) as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="Graph database is temporarily unavailable",
+        ) from exc

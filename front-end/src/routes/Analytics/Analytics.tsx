@@ -5,6 +5,8 @@ import { GraphVisualization } from "@/components/features/GraphVisualization";
 import { FilterPanel, type FilterState } from "@/components/features/FilterPanel";
 import { QueryPanel } from "@/components/features/QueryPanel";
 import { useImmer } from "use-immer";
+import { useState } from "react";
+import { useGraphData, type GraphFilters } from "@/hooks/useGraphData";
 
 const INITIAL_FILTER_STATE: FilterState = {
   topRated: false,
@@ -17,14 +19,44 @@ const INITIAL_FILTER_STATE: FilterState = {
   yearRange: null,
 };
 
+function toGraphFilters(filters: FilterState): GraphFilters {
+  return {
+    selectedSearchResult: filters.selectedSearchResult,
+    titleType: filters.titleType,
+    genre: filters.genre,
+    ratingRange: filters.ratingRange,
+    yearRange: filters.yearRange,
+    topRated: filters.topRated,
+    mostPopular: filters.mostPopular,
+  };
+}
+
 export default function Analytics() {
   const [filters, setFilters] = useImmer<FilterState>(INITIAL_FILTER_STATE);
+  const [graphRequestToken, setGraphRequestToken] = useState(0);
+  const [submittedGraphFilters, setSubmittedGraphFilters] = useState<GraphFilters>(() => toGraphFilters(INITIAL_FILTER_STATE));
+
+  const graphDataQuery = useGraphData(submittedGraphFilters, graphRequestToken);
+
+  const handleShowGraph = () => {
+    setSubmittedGraphFilters(toGraphFilters(filters));
+    setGraphRequestToken((prev) => prev + 1);
+  };
 
   return (
     <ResizablePanelGroup orientation="horizontal" className="size-full overflow-hidden">
         {/* Left Panel - Graph Visualization */}
         <ResizablePanel defaultSize={65} minSize={40}>
-          <GraphVisualization />
+          <GraphVisualization
+            data={graphDataQuery.data}
+            isLoading={graphDataQuery.isLoading || graphDataQuery.isFetching}
+            isError={graphDataQuery.isError}
+            error={graphDataQuery.error}
+            onRetry={() => {
+              void graphDataQuery.refetch();
+            }}
+            hasRequested={graphRequestToken > 0}
+          />
         </ResizablePanel>
 
         <ResizableHandle className="w-px bg-neutral-800" />
@@ -37,6 +69,9 @@ export default function Analytics() {
               <FilterPanel
                 filters={filters}
                 setFilters={setFilters}
+                onShowGraph={handleShowGraph}
+                isGraphLoading={graphDataQuery.isLoading || graphDataQuery.isFetching}
+                hasGraphRequested={graphRequestToken > 0}
               />
             </div>
 
