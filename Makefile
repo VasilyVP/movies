@@ -14,15 +14,20 @@ install:
 seed:
 	@uv run python scripts/imdb_seed.py
 	@uv run python scripts/neo4j_seed.py
+	@uv run python scripts/chroma_seed/main.py
 
 # Seed Neo4j with only the first 100 titles and their related persons/relationships (for dev/testing)
 seed-sample:
 	@uv run python scripts/imdb_seed.py
 	@uv run python scripts/neo4j_seed.py --limit 1000
+	@uv run python scripts/chroma_seed/main.py --limit 1000
 
-# Run back-end unit tests
+# Run back-end and scripts unit tests
 test:
+	@echo "Running back-end unit tests..."
 	@uv run --directory back-end python -m unittest discover -s tests -p "test_*.py"
+	@echo "Running scripts unit tests..."
+	@uv run python -m unittest discover -s scripts/tests -p "test_*.py"
 
 # Resume previously stopped containers (no config reload)
 start:

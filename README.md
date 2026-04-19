@@ -1,11 +1,13 @@
 # IMDB Analytics
 
-Full-stack app for graph analytics and instant querying over the IMDB dataset — Neo4j for graph traversals, DuckDB for relational queries, served via FastAPI to a React front-end.
+Full-stack app for graph analytics and instant querying over the IMDB dataset — Neo4j for graph traversals, DuckDB for relational queries, and Chroma DB for similarity search and storing film descriptions, served via FastAPI to a React front-end.
 
 ## Architecture
 
 ```
 IMDB TSV.GZ → Parquet (back-end/data/) → DuckDB (imdb.duckdb) → Neo4j graph
+                                                \             ↘
+                                                 \→ Chroma DB (similarity + film descriptions)
                                                   ↓
                                     FastAPI (back-end/) → React + Vite (front-end/)
 ```
@@ -14,6 +16,7 @@ IMDB TSV.GZ → Parquet (back-end/data/) → DuckDB (imdb.duckdb) → Neo4j grap
 |---|---|
 | Relational store | DuckDB · Parquet |
 | Graph store | Neo4j (Docker) |
+| Vector store | Chroma DB (similarity search + film descriptions) |
 | API | FastAPI · Granian |
 | Front-end | React 19 · React Router 7 · TypeScript · Vite · Tailwind CSS 4 · shadcn/ui |
 

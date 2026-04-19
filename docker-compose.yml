@@ -21,6 +21,15 @@ services:
       timeout: 5s
       retries: 5
 
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: movies-chromadb
+    ports:
+      - "8001:8000"   # ChromaDB HTTP API (FastAPI uses host 8000)
+    volumes:
+      - chromadb_data:/chroma/chroma
+
 volumes:
   neo4j_data:
   neo4j_logs:
+  chromadb_data:
