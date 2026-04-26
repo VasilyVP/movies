@@ -4,11 +4,11 @@ import NVL, { type Layout, type Node as NvlNode, type Relationship as NvlRelatio
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { ZoomIn, ZoomOut, Maximize2, AlertTriangle } from "lucide-react";
-import type { GraphDataResponse, GraphEdge, GraphNode } from "@/hooks/useGraphData";
+import type { GraphDataResponse, GraphNode } from "@/hooks/useGraphData";
 import { useItemDetails } from "@/hooks/useItemDetails";
 
 type LayoutMode = "force" | "hierarchical" | "circular" | "radial";
-type RelationshipFilter = "all" | "actors" | "directors" | "genres";
+const ALL_RELATIONSHIPS_VALUE = "__all_relationships__";
 type GraphSelectionCallbacks = Pick<MouseEventCallbacks, "onNodeClick" | "onNodeDoubleClick" | "onCanvasClick">;
 
 export type GraphNavigationTarget = {
@@ -42,22 +42,6 @@ function buildGraphMouseEventCallbacks(selectionCallbacks: GraphSelectionCallbac
     onDrag: true,
     ...selectionCallbacks,
   };
-}
-
-function relationshipMatchesFilter(edge: GraphEdge, filter: RelationshipFilter): boolean {
-  if (filter === "all") {
-    return true;
-  }
-
-  if (filter === "actors") {
-    return edge.type === "ACTED_IN";
-  }
-
-  if (filter === "directors") {
-    return edge.type === "DIRECTED";
-  }
-
-  return true;
 }
 
 function formatErrorMessage(error: Error | null): string {
@@ -110,38 +94,49 @@ export function GraphVisualization({
   onNavigateToNode,
 }: GraphVisualizationProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>("force");
-  const [relationshipFilter, setRelationshipFilter] = useState<RelationshipFilter>("all");
+  const [relationshipFilter, setRelationshipFilter] = useState<string>(ALL_RELATIONSHIPS_VALUE);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const nvlRef = useRef<NVL | null>(null);
 
-  const filteredGraph = useMemo(() => {
-    if (!data) {
-      return { nodes: [] as GraphNode[], edges: [] as GraphEdge[] };
+  const graphData = useMemo(
+    () => ({
+      nodes: data?.nodes ?? [],
+      edges: data?.edges ?? [],
+    }),
+    [data],
+  );
+
+  const relationshipOptions = useMemo(() => {
+    return Array.from(new Set(graphData.edges.map((edge) => edge.type))).sort((a, b) => a.localeCompare(b));
+  }, [graphData.edges]);
+
+  const effectiveRelationshipFilter =
+    relationshipFilter !== ALL_RELATIONSHIPS_VALUE && relationshipOptions.includes(relationshipFilter)
+      ? relationshipFilter
+      : ALL_RELATIONSHIPS_VALUE;
+
+  const visibleGraphData = useMemo(() => {
+    if (effectiveRelationshipFilter === ALL_RELATIONSHIPS_VALUE) {
+      return graphData;
     }
 
-    let edges = data.edges.filter((edge) => relationshipMatchesFilter(edge, relationshipFilter));
-    let visibleNodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
-
-    if (relationshipFilter === "genres") {
-      const titleIds = new Set(
-        data.nodes
-          .filter((node) => node.type === "Title" && (node.genres?.length ?? 0) > 0)
-          .map((node) => node.id),
-      );
-      edges = data.edges.filter((edge) => titleIds.has(edge.target));
-      visibleNodeIds = new Set(edges.flatMap((edge) => [edge.source, edge.target]));
-      for (const titleId of titleIds) {
-        visibleNodeIds.add(titleId);
-      }
+    const edges = graphData.edges.filter((edge) => edge.type === effectiveRelationshipFilter);
+    const visibleNodeIds = new Set<string>();
+    for (const edge of edges) {
+      visibleNodeIds.add(edge.source);
+      visibleNodeIds.add(edge.target);
     }
 
-    const nodes = data.nodes.filter((node) => visibleNodeIds.has(node.id));
+    const nodes = graphData.nodes.filter((node) => visibleNodeIds.has(node.id));
     return { nodes, edges };
-  }, [data, relationshipFilter]);
+  }, [effectiveRelationshipFilter, graphData]);
+
+  const effectiveSelectedNodeId =
+    selectedNodeId && visibleGraphData.nodes.some((node) => node.id === selectedNodeId) ? selectedNodeId : null;
 
   const selectedNode = useMemo(
-    () => filteredGraph.nodes.find((node) => node.id === selectedNodeId) ?? null,
-    [filteredGraph.nodes, selectedNodeId],
+    () => graphData.nodes.find((node) => node.id === effectiveSelectedNodeId) ?? null,
+    [effectiveSelectedNodeId, graphData.nodes],
   );
 
   const selectedNodeItemDetailsParams = useMemo(
@@ -155,17 +150,17 @@ export function GraphVisualization({
   const itemDetailsQuery = useItemDetails(selectedNodeItemDetailsParams);
 
   const nvlNodes = useMemo<NvlNode[]>(() => {
-    return filteredGraph.nodes.map((node) => ({
+    return visibleGraphData.nodes.map((node) => ({
       id: node.id,
       caption: node.label,
       color: node.type === "Title" ? "#60A5FA" : "#22C55E",
       size: node.isAnchor ? 38 : 30,
-      selected: node.id === selectedNodeId,
+      selected: node.id === effectiveSelectedNodeId,
     }));
-  }, [filteredGraph.nodes, selectedNodeId]);
+  }, [effectiveSelectedNodeId, visibleGraphData.nodes]);
 
   const nvlRels = useMemo<NvlRelationship[]>(() => {
-    return filteredGraph.edges.map((edge) => ({
+    return visibleGraphData.edges.map((edge) => ({
       id: edge.id,
       from: edge.source,
       to: edge.target,
@@ -174,7 +169,7 @@ export function GraphVisualization({
       color: "#52525B",
       selected: false,
     }));
-  }, [filteredGraph.edges]);
+  }, [visibleGraphData.edges]);
 
   const graphNodeIds = useMemo(() => nvlNodes.map((node) => node.id), [nvlNodes]);
 
@@ -185,7 +180,7 @@ export function GraphVisualization({
           setSelectedNodeId(node.id);
         },
         onNodeDoubleClick: (node) => {
-          const graphNode = filteredGraph.nodes.find((n) => n.id === node.id);
+          const graphNode = graphData.nodes.find((n) => n.id === node.id);
           if (!graphNode) {
             return;
           }
@@ -195,7 +190,7 @@ export function GraphVisualization({
           setSelectedNodeId(null);
         },
       }),
-    [filteredGraph.nodes, onNavigateToNode],
+    [graphData.nodes, onNavigateToNode],
   );
 
   const handleZoomIn = () => {
@@ -225,7 +220,11 @@ export function GraphVisualization({
     nvlRef.current.resetZoom();
   };
 
-  const isEmptyData = !isLoading && !isError && hasRequested && (filteredGraph.nodes.length === 0 || filteredGraph.edges.length === 0);
+  const isEmptyData =
+    !isLoading &&
+    !isError &&
+    hasRequested &&
+    (visibleGraphData.nodes.length === 0 || visibleGraphData.edges.length === 0);
   const errorMessage = formatErrorMessage(error);
 
   return (
@@ -244,15 +243,17 @@ export function GraphVisualization({
             </SelectContent>
           </Select>
 
-          <Select value={relationshipFilter} onValueChange={(value) => setRelationshipFilter(value as RelationshipFilter)}>
-            <SelectTrigger className="w-44 h-8 bg-neutral-900 border-neutral-800" aria-label="Relationship filter">
-              <SelectValue />
+          <Select value={effectiveRelationshipFilter} onValueChange={setRelationshipFilter}>
+            <SelectTrigger className="w-56 h-8 bg-neutral-900 border-neutral-800" aria-label="Relationship filter">
+              <SelectValue placeholder="All relationships" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Relationships</SelectItem>
-              <SelectItem value="actors">Actors</SelectItem>
-              <SelectItem value="directors">Directors</SelectItem>
-              <SelectItem value="genres">Genres</SelectItem>
+              <SelectItem value={ALL_RELATIONSHIPS_VALUE}>All relationships</SelectItem>
+              {relationshipOptions.map((relationshipType) => (
+                <SelectItem key={relationshipType} value={relationshipType}>
+                  {relationshipType}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
 
@@ -335,8 +336,10 @@ export function GraphVisualization({
 
       <div className="border-t border-neutral-800 px-4 py-2 text-xs text-neutral-500 space-y-2" role="status">
         <div className="flex gap-6 flex-wrap">
-          <span>Nodes: <span className="text-neutral-300">{filteredGraph.nodes.length}</span></span>
-          <span>Edges: <span className="text-neutral-300">{filteredGraph.edges.length}</span></span>
+          <span>Nodes: <span className="text-neutral-300">{visibleGraphData.nodes.length}</span></span>
+          <span>Edges: <span className="text-neutral-300">{visibleGraphData.edges.length}</span></span>
+          <span>Total nodes: <span className="text-neutral-300">{graphData.nodes.length}</span></span>
+          <span>Total edges: <span className="text-neutral-300">{graphData.edges.length}</span></span>
           <span>Selected: <span className="text-neutral-300">{selectedNode?.label ?? "None"}</span></span>
         </div>
         {selectedNode && (

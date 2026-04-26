@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from app.api.endpoints.query import router as query_router
 from app.core.database import get_duckdb
 from app.core.limiter import limiter
+from app.repositories import graph_data_repository
 from app.repositories.graph_data_repository import GraphCandidateIds, GraphRelationshipRow
 from app.schemas.graph_data import GraphDataParams, GraphDataResponse
 from app.services import graph_data_service
@@ -352,6 +353,12 @@ class GraphDataEndpointTests(unittest.TestCase):
             response.json(),
             {"detail": "Graph database is temporarily unavailable"},
         )
+
+
+class GraphDataRepositoryCypherTests(unittest.TestCase):
+    def test_graph_data_cypher_uses_scoped_call_subquery(self) -> None:
+        self.assertIn("CALL (", graph_data_repository.GRAPH_DATA_CYPHER)
+        self.assertNotIn("CALL {", graph_data_repository.GRAPH_DATA_CYPHER)
 
 
 if __name__ == "__main__":

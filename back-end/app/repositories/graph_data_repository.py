@@ -261,7 +261,7 @@ def fetch_candidate_ids(
     )
 
 
-_GRAPH_DATA_CYPHER = """
+GRAPH_DATA_CYPHER = """
 WITH
     $anchor_name_id AS anchor_name_id,
     $anchor_title_id AS anchor_title_id,
@@ -276,7 +276,15 @@ WITH
     core_categories,
     anchor_name_id IS NOT NULL AS has_name_anchor,
     anchor_title_id IS NOT NULL AS has_title_anchor
-CALL {
+CALL (
+    anchor_name_id,
+    anchor_title_id,
+    candidate_title_ids,
+    candidate_person_ids,
+    core_categories,
+    has_name_anchor,
+    has_title_anchor
+) {
     WITH
         anchor_name_id,
         anchor_title_id,
@@ -394,7 +402,7 @@ def fetch_graph_rows(
     }
 
     with driver.session() as session:  # type: ignore
-        result = session.run(_GRAPH_DATA_CYPHER, query_params)
+        result = session.run(GRAPH_DATA_CYPHER, query_params)
         rows = list(result)
 
     output: list[GraphRelationshipRow] = []

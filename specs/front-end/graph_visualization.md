@@ -10,7 +10,7 @@ This spec defines v1 behavior only.
 
 - Graph data fetch is triggered only by clicking Show graph.
 - Clicking a node selects and highlights it, then shows inline node details.
-- Relationship filter in the graph toolbar is client-side only (no new backend query parameters).
+- Front-end graph rendering uses the full node and edge sets returned by `/query/graph-data`.
 - Layout switching is in scope for v1.
 
 ## Files
@@ -172,23 +172,10 @@ type GraphVisualizationProps = {
 
 ```ts
 type LayoutMode = "force" | "hierarchical" | "circular" | "radial";
-type RelationshipFilter = "all" | "actors" | "directors" | "genres";
 ```
 
 - `selectedNodeId: string | null`
 - `layoutMode: LayoutMode`
-- `relationshipFilter: RelationshipFilter`
-
-### Relationship Filter (client-side)
-
-Apply visibility filtering after data is loaded:
-
-- `all`: show all nodes and edges.
-- `actors`: show edges where `type === 'ACTED_IN'`; keep only connected nodes.
-- `directors`: show edges where `type === 'DIRECTED'`; keep only connected nodes.
-- `genres`: show only title nodes with at least one genre and edges connected to those title nodes.
-
-No backend parameter changes are introduced for this control in v1.
 
 ### Node Interaction
 
@@ -229,12 +216,12 @@ Truncation rule:
 
 ## Stats Footer Rules
 
-Display actual values from response and local selection:
+Display actual values from the rendered response and local selection:
 
-- Nodes: visible node count after client-side relationship filtering.
-- Edges: visible edge count after client-side relationship filtering.
+- Nodes: rendered node count from the `/query/graph-data` response.
+- Edges: rendered edge count from the `/query/graph-data` response.
 - Selected: selected node label or `None`.
-- Optional: show total returned counts from `meta.returnedNodes` and `meta.returnedEdges` for reference.
+- Optional: show returned counts from `meta.returnedNodes` and `meta.returnedEdges` for truncation reference.
 
 ## Error Handling
 

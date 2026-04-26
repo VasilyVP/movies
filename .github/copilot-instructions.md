@@ -72,6 +72,7 @@ NEO4J_PASSWORD=password
 ## Frontend Rules (TypeScript)
 
 - Use Bun only (`bun add`, `bun run`), never npm
+- Do not use TDD on front-end tasks by default unless explicitly requested
 - Respect strict TypeScript configuration
 - Keep query keys stable in React Query hooks
 - Use `keepPreviousData` for refetch transitions when applicable
