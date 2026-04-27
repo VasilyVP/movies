@@ -15,6 +15,39 @@ import scripts.backup_snapshots as backup_snapshots  # noqa: E402
 
 
 class BackupSnapshotsTests(unittest.TestCase):
+    def test_resolve_snapshot_targets_defaults_to_all_when_no_flags(self) -> None:
+        targets = backup_snapshots.resolve_snapshot_targets(
+            include_chromadb=False,
+            include_neo4j=False,
+        )
+
+        self.assertEqual(
+            [target.archive_name for target in targets],
+            ["neo4j_data", "neo4j_logs", "chromadb_data"],
+        )
+
+    def test_resolve_snapshot_targets_can_select_only_chromadb(self) -> None:
+        targets = backup_snapshots.resolve_snapshot_targets(
+            include_chromadb=True,
+            include_neo4j=False,
+        )
+
+        self.assertEqual(
+            [target.archive_name for target in targets],
+            ["chromadb_data"],
+        )
+
+    def test_resolve_snapshot_targets_can_select_only_neo4j(self) -> None:
+        targets = backup_snapshots.resolve_snapshot_targets(
+            include_chromadb=False,
+            include_neo4j=True,
+        )
+
+        self.assertEqual(
+            [target.archive_name for target in targets],
+            ["neo4j_data", "neo4j_logs"],
+        )
+
     def test_render_progress_line_uses_mb_units(self) -> None:
         line = backup_snapshots.render_progress_line(
             archive_name="demo.tar",
@@ -146,6 +179,8 @@ class BackupSnapshotsTests(unittest.TestCase):
         args = parser.parse_args([])
 
         self.assertEqual(args.output_dir, backup_snapshots.DEFAULT_OUTPUT_DIR)
+        self.assertFalse(args.chromadb)
+        self.assertFalse(args.neo4j)
 
     def test_main_returns_error_when_snapshot_raises(self) -> None:
         with patch(

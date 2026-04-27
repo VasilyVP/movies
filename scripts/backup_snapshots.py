@@ -1,3 +1,9 @@
+"""Create local snapshots of Neo4j and ChromaDB container volumes.
+
+By default, both databases are backed up. Use --chromadb and/or --neo4j
+to limit the backup to specific snapshot targets.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -58,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=DEFAULT_OUTPUT_DIR,
         help="Directory where snapshot archives are written. Existing files are overwritten.",
+    )
+    parser.add_argument(
+        "--chromadb",
+        action="store_true",
+        help="Back up only ChromaDB snapshot targets (unless combined with --neo4j).",
+    )
+    parser.add_argument(
+        "--neo4j",
+        action="store_true",
+        help="Back up only Neo4j snapshot targets (unless combined with --chromadb).",
     )
     return parser
 
@@ -212,10 +228,35 @@ def _write_snapshot_archive_chunked(
     return target_path
 
 
-def backup_project_snapshots(output_dir: Path) -> list[Path]:
+def resolve_snapshot_targets(
+    include_chromadb: bool,
+    include_neo4j: bool,
+) -> tuple[SnapshotTarget, ...]:
+    if not include_chromadb and not include_neo4j:
+        return PROJECT_SNAPSHOT_TARGETS
+
+    selected_targets: list[SnapshotTarget] = []
+    for target in PROJECT_SNAPSHOT_TARGETS:
+        if include_chromadb and target.container_name == DEFAULT_CHROMA_CONTAINER_NAME:
+            selected_targets.append(target)
+        if include_neo4j and target.container_name == DEFAULT_NEO4J_CONTAINER_NAME:
+            selected_targets.append(target)
+
+    return tuple(selected_targets)
+
+
+def backup_project_snapshots(
+    output_dir: Path,
+    include_chromadb: bool = False,
+    include_neo4j: bool = False,
+) -> list[Path]:
+    targets = resolve_snapshot_targets(
+        include_chromadb=include_chromadb,
+        include_neo4j=include_neo4j,
+    )
     snapshot_paths: list[Path] = []
-    total_targets = len(PROJECT_SNAPSHOT_TARGETS)
-    for index, target in enumerate(PROJECT_SNAPSHOT_TARGETS, start=1):
+    total_targets = len(targets)
+    for index, target in enumerate(targets, start=1):
         print(
             f"[{index}/{total_targets}] Backing up {target.archive_name} "
             f"from {target.container_name}:{target.source_path}",
@@ -235,7 +276,11 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
 
     try:
-        snapshot_paths = backup_project_snapshots(output_dir=args.output_dir)
+        snapshot_paths = backup_project_snapshots(
+            output_dir=args.output_dir,
+            include_chromadb=args.chromadb,
+            include_neo4j=args.neo4j,
+        )
         print(f"Snapshots created in: {args.output_dir}")
         for snapshot_path in snapshot_paths:
             print(snapshot_path)
